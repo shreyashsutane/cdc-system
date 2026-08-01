@@ -1,0 +1,4 @@
+functions-framework>=3.0.0
+google-cloud-bigquery>=3.0.0
+cloudevents>=1.2.0
+google-events>=0.14.0

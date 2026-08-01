@@ -1,0 +1,32 @@
+# Terraform local state and binaries
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+
+# Node dependencies and build artifacts
+node_modules/
+dist/
+build/
+.cache/
+
+# Credentials, Keys, and Environment Variables
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*-key.json
+service-account*.json
+gcp-*.json
+credentials*.json
+
+# Python cache
+__pycache__/
+*.pyc
+
+# OS / IDE Files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

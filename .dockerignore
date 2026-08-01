@@ -1,0 +1,8 @@
+node_modules/
+block3_middleware/node_modules/
+block4_dashboard/node_modules/
+block4_dashboard/dist/
+.git
+.gitignore
+.gcloudignore
+block1_terraform/

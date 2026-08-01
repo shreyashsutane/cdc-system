@@ -1,0 +1,10 @@
+.gcloudignore
+.git
+.gitignore
+node_modules/
+block3_middleware/node_modules/
+block4_dashboard/node_modules/
+block4_dashboard/dist/
+block1_terraform/.terraform/
+block1_terraform/tmp/
+block1_terraform/*.tfstate*
