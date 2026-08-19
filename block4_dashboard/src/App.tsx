@@ -465,9 +465,9 @@ export default function App() {
           </form>
 
           <div className="mt-8 pt-6 border-t border-slate-800/60 text-center relative">
-            <span className="text-[10px] font-mono text-slate-500 uppercase font-semibold">Security Policy Information</span>
-            <p className="text-[10px] text-slate-500 mt-2 font-mono leading-relaxed">
-              Default Access Token: <code className="text-slate-400 select-all font-bold">Vai@12345</code>
+            <span className="text-[10px] font-mono text-slate-500 uppercase font-semibold">Protected Environment</span>
+            <p className="text-[10px] text-slate-500 mt-1 font-mono leading-relaxed">
+              Authorized personnel only. All access attempts are audited.
             </p>
           </div>
 
