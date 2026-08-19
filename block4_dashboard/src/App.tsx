@@ -16,7 +16,11 @@ import {
   Layers, 
   ShieldCheck,
   Code2,
-  BookOpen
+  BookOpen,
+  Clock,
+  ArrowRight,
+  LogOut,
+  Zap
 } from 'lucide-react';
 import { CDCLog, ConnectionStatus } from './types';
 import DocumentationView from './DocumentationView';
@@ -40,13 +44,29 @@ function flattenObject(obj: any, prefix = ''): Record<string, any> {
   return res;
 }
 
-import { LogOut } from 'lucide-react';
+export type TimePreset = 'ALL' | '5M' | '10M' | '15M' | '1H' | '3H' | '6H' | 'CUSTOM';
+
+export interface QueryEstimate {
+  bytesProcessed: number;
+  gbProcessed: number;
+  estimatedCostUsd: number;
+  costFormatted: string;
+}
 
 export default function App() {
   const [logs, setLogs] = useState<CDCLog[]>([]);
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('connecting');
   const [searchQuery, setSearchQuery] = useState('');
   const [filterType, setFilterType] = useState<'ALL' | 'INSERT' | 'UPDATE' | 'DELETE'>('ALL');
+  
+  // Timestamp filtering state
+  const [timePreset, setTimePreset] = useState<TimePreset>('ALL');
+  const [customFrom, setCustomFrom] = useState('');
+  const [customTo, setCustomTo] = useState('');
+  const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+  const [isEstimating, setIsEstimating] = useState(false);
+  const [queryEstimate, setQueryEstimate] = useState<QueryEstimate | null>(null);
+
   const [selectedLog, setSelectedLog] = useState<CDCLog | null>(null);
   const [recentEventIds, setRecentEventIds] = useState<Set<string>>(new Set());
   
@@ -193,7 +213,120 @@ export default function App() {
     }
   };
 
-  // Filter logs based on search inputs & active pill
+  // Query historical logs from BigQuery when custom or larger ranges are requested
+  const fetchHistoricalLogs = async (fromIso?: string, toIso?: string) => {
+    if (!token) return;
+    setIsLoadingHistory(true);
+    try {
+      const params = new URLSearchParams();
+      if (fromIso) params.append('from', fromIso);
+      if (toIso) params.append('to', toIso);
+      params.append('limit', '1000');
+
+      const res = await fetch(`/api/logs/history?${params.toString()}`, {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data.logs) {
+          setLogs(data.logs);
+        }
+      }
+    } catch (err) {
+      console.error('Error fetching historical logs:', err);
+    } finally {
+      setIsLoadingHistory(false);
+    }
+  };
+
+  // Fetch BigQuery dry-run cost & data volume estimate before executing
+  const fetchQueryEstimate = async (fromIso?: string, toIso?: string) => {
+    if (!token) return;
+    setIsEstimating(true);
+    try {
+      const params = new URLSearchParams();
+      if (fromIso) params.append('from', fromIso);
+      if (toIso) params.append('to', toIso);
+      params.append('limit', '1000');
+
+      const res = await fetch(`/api/logs/estimate?${params.toString()}`, {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+
+      if (res.ok) {
+        const data: QueryEstimate = await res.json();
+        setQueryEstimate(data);
+      }
+    } catch (err) {
+      console.error('Error fetching query estimate:', err);
+    } finally {
+      setIsEstimating(false);
+    }
+  };
+
+  // Helper to get cutoff timestamp for presets
+  const getPresetCutoff = (preset: TimePreset): Date | null => {
+    const now = new Date();
+    switch (preset) {
+      case '5M': return new Date(now.getTime() - 5 * 60 * 1000);
+      case '10M': return new Date(now.getTime() - 10 * 60 * 1000);
+      case '15M': return new Date(now.getTime() - 15 * 60 * 1000);
+      case '1H': return new Date(now.getTime() - 60 * 60 * 1000);
+      case '3H': return new Date(now.getTime() - 3 * 60 * 60 * 1000);
+      case '6H': return new Date(now.getTime() - 6 * 60 * 60 * 1000);
+      default: return null;
+    }
+  };
+
+  // Handle Preset Selection change
+  const handleTimePresetChange = (preset: TimePreset) => {
+    setTimePreset(preset);
+    if (preset === 'ALL') {
+      setQueryEstimate(null);
+      fetchHistoricalLogs();
+    } else if (preset === '3H' || preset === '6H') {
+      const cutoff = getPresetCutoff(preset);
+      if (cutoff) {
+        fetchQueryEstimate(cutoff.toISOString());
+        fetchHistoricalLogs(cutoff.toISOString());
+      }
+    } else if (preset === 'CUSTOM') {
+      // Calculate initial estimate if dates already present
+      if (customFrom) {
+        const fromIso = new Date(customFrom).toISOString();
+        const toIso = customTo ? new Date(customTo).toISOString() : new Date().toISOString();
+        fetchQueryEstimate(fromIso, toIso);
+      }
+    } else {
+      // For short client-cached ranges (5M, 10M, 15M, 1H), calculate local estimate
+      const cutoff = getPresetCutoff(preset);
+      if (cutoff) fetchQueryEstimate(cutoff.toISOString());
+    }
+  };
+
+  // Live estimate recalculation when custom date changes
+  useEffect(() => {
+    if (timePreset === 'CUSTOM' && customFrom) {
+      const fromIso = new Date(customFrom).toISOString();
+      const toIso = customTo ? new Date(customTo).toISOString() : new Date().toISOString();
+      fetchQueryEstimate(fromIso, toIso);
+    }
+  }, [customFrom, customTo, timePreset]);
+
+  // Apply custom range filter
+  const applyCustomDateFilter = () => {
+    if (!customFrom) return;
+    const fromIso = new Date(customFrom).toISOString();
+    const toIso = customTo ? new Date(customTo).toISOString() : new Date().toISOString();
+    fetchHistoricalLogs(fromIso, toIso);
+  };
+
+  // Filter logs based on search inputs, operation type & active timestamp filter
   const filteredLogs = logs.filter(log => {
     const matchesSearch = 
       log.entity_kind.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -203,11 +336,31 @@ export default function App() {
 
     const matchesType = filterType === 'ALL' || log.operation_type === filterType;
 
-    return matchesSearch && matchesType;
+    // Time filtering
+    let matchesTime = true;
+    const logTime = new Date(log.execution_time).getTime();
+
+    if (timePreset === 'CUSTOM') {
+      if (customFrom) {
+        const fromTime = new Date(customFrom).getTime();
+        if (logTime < fromTime) matchesTime = false;
+      }
+      if (customTo) {
+        const toTime = new Date(customTo).getTime();
+        if (logTime > toTime) matchesTime = false;
+      }
+    } else if (timePreset !== 'ALL') {
+      const cutoff = getPresetCutoff(timePreset);
+      if (cutoff && logTime < cutoff.getTime()) {
+        matchesTime = false;
+      }
+    }
+
+    return matchesSearch && matchesType && matchesTime;
   });
 
-  // Calculate statistics counts
-  const statCounts = logs.reduce(
+  // Calculate statistics counts dynamically based on active filtered time window & search
+  const statCounts = filteredLogs.reduce(
     (acc, log) => {
       acc.all++;
       if (log.operation_type === 'INSERT') acc.inserts++;
@@ -314,7 +467,7 @@ export default function App() {
           <div className="mt-8 pt-6 border-t border-slate-800/60 text-center relative">
             <span className="text-[10px] font-mono text-slate-500 uppercase font-semibold">Security Policy Information</span>
             <p className="text-[10px] text-slate-500 mt-2 font-mono leading-relaxed">
-              Default Dev Token: <code className="text-slate-400 select-all font-bold">AetherCDC-Secure-Token-2026</code>
+              Default Access Token: <code className="text-slate-400 select-all font-bold">Vai@12345</code>
             </p>
           </div>
 
@@ -452,42 +605,157 @@ export default function App() {
         </div>
 
         {/* --------------------------------------------------------------------------
-            CONTROLS PANEL
+            CONTROLS & TIME FILTER PANEL
             -------------------------------------------------------------------------- */}
-        <div className="glass-panel rounded-xl p-4 flex flex-col sm:flex-row items-center justify-between gap-4">
+        <div className="glass-panel rounded-xl p-4 space-y-4">
           
-          {/* Search bar */}
-          <div className="relative w-full sm:w-96">
-            <Search className="absolute left-3 top-2.5 w-4 h-4 text-slate-500" />
-            <input 
-              type="text" 
-              placeholder="Search Kind, Key ID, User Email..." 
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full bg-[#0a0d16] border border-slate-800/80 rounded-lg pl-10 pr-4 py-2 text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-emerald-500/60 focus:ring-1 focus:ring-emerald-500/40 transition"
-            />
+          {/* Top Row: Search & Operation Type filters */}
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
+            
+            {/* Search bar */}
+            <div className="relative w-full sm:w-96">
+              <Search className="absolute left-3 top-2.5 w-4 h-4 text-slate-500" />
+              <input 
+                type="text" 
+                placeholder="Search Kind, Key ID, User Email..." 
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full bg-[#0a0d16] border border-slate-800/80 rounded-lg pl-10 pr-4 py-2 text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-emerald-500/60 focus:ring-1 focus:ring-emerald-500/40 transition"
+              />
+            </div>
+
+            {/* Type filters */}
+            <div className="flex items-center space-x-2 w-full sm:w-auto overflow-x-auto py-1">
+              <span className="text-xs text-slate-500 font-semibold font-mono uppercase mr-2 shrink-0">Type:</span>
+              {(['ALL', 'INSERT', 'UPDATE', 'DELETE'] as const).map((type) => (
+                <button
+                  key={type}
+                  onClick={() => setFilterType(type)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold tracking-wider transition ${
+                    filterType === type 
+                      ? type === 'INSERT' ? 'bg-emerald-500/25 border border-emerald-500/50 text-emerald-400'
+                        : type === 'UPDATE' ? 'bg-amber-500/25 border border-amber-500/50 text-amber-400'
+                        : type === 'DELETE' ? 'bg-rose-500/25 border border-rose-500/50 text-rose-400'
+                        : 'bg-slate-700/50 border border-slate-600 text-white'
+                      : 'bg-transparent border border-slate-800 text-slate-400 hover:border-slate-700 hover:text-slate-200'
+                  }`}
+                >
+                  {type}
+                </button>
+              ))}
+            </div>
+
           </div>
 
-          {/* Type filters */}
-          <div className="flex items-center space-x-2 w-full sm:w-auto overflow-x-auto py-1">
-            <span className="text-xs text-slate-500 font-semibold font-mono uppercase mr-2 shrink-0">Filter:</span>
-            {(['ALL', 'INSERT', 'UPDATE', 'DELETE'] as const).map((type) => (
-              <button
-                key={type}
-                onClick={() => setFilterType(type)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-semibold tracking-wider transition ${
-                  filterType === type 
-                    ? type === 'INSERT' ? 'bg-emerald-500/25 border border-emerald-500/50 text-emerald-400'
-                      : type === 'UPDATE' ? 'bg-amber-500/25 border border-amber-500/50 text-amber-400'
-                      : type === 'DELETE' ? 'bg-rose-500/25 border border-rose-500/50 text-rose-400'
-                      : 'bg-slate-700/50 border border-slate-600 text-white'
-                    : 'bg-transparent border border-slate-800 text-slate-400 hover:border-slate-700 hover:text-slate-200'
-                }`}
-              >
-                {type}
-              </button>
-            ))}
+          {/* Bottom Row: Timestamp Presets & Custom Range */}
+          <div className="pt-3 border-t border-slate-800/60 flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4">
+            
+            {/* Timestamp Presets */}
+            <div className="flex items-center space-x-1.5 overflow-x-auto w-full lg:w-auto py-1">
+              <div className="flex items-center space-x-1.5 text-xs text-slate-400 font-semibold font-mono uppercase mr-2 shrink-0">
+                <Clock className="w-3.5 h-3.5 text-emerald-400" />
+                <span>Time Range:</span>
+              </div>
+
+              {[
+                { id: 'ALL', label: 'All Time' },
+                { id: '5M', label: 'Last 5m' },
+                { id: '10M', label: 'Last 10m' },
+                { id: '15M', label: 'Last 15m' },
+                { id: '1H', label: 'Last 1h' },
+                { id: '3H', label: 'Last 3h' },
+                { id: '6H', label: 'Last 6h' },
+                { id: 'CUSTOM', label: 'Custom Range' },
+              ].map((preset) => (
+                <button
+                  key={preset.id}
+                  onClick={() => handleTimePresetChange(preset.id as TimePreset)}
+                  className={`px-2.5 py-1 rounded-md text-xs font-mono font-medium transition shrink-0 ${
+                    timePreset === preset.id
+                      ? 'bg-emerald-500/20 border border-emerald-500/50 text-emerald-300 shadow-[0_0_10px_rgba(16,185,129,0.15)]'
+                      : 'bg-[#0a0d16] border border-slate-800 text-slate-400 hover:border-slate-700 hover:text-slate-200'
+                  }`}
+                >
+                  {preset.label}
+                </button>
+              ))}
+            </div>
+
+            {/* Custom Date Range Picker */}
+            {timePreset === 'CUSTOM' && (
+              <div className="flex flex-wrap items-center gap-2 bg-[#0a0d16] p-2 rounded-lg border border-slate-800 w-full lg:w-auto">
+                <div className="flex items-center space-x-1.5 text-xs text-slate-400 font-mono">
+                  <span className="text-slate-500 font-bold">FROM:</span>
+                  <input 
+                    type="datetime-local" 
+                    value={customFrom}
+                    onChange={(e) => setCustomFrom(e.target.value)}
+                    className="bg-[#05070f] border border-slate-700/80 rounded px-2 py-1 text-xs text-slate-200 focus:outline-none focus:border-emerald-500"
+                  />
+                </div>
+
+                <div className="flex items-center space-x-1.5 text-xs text-slate-400 font-mono">
+                  <span className="text-slate-500 font-bold">TO:</span>
+                  <input 
+                    type="datetime-local" 
+                    value={customTo}
+                    onChange={(e) => setCustomTo(e.target.value)}
+                    className="bg-[#05070f] border border-slate-700/80 rounded px-2 py-1 text-xs text-slate-200 focus:outline-none focus:border-emerald-500"
+                  />
+                </div>
+
+                <button
+                  onClick={applyCustomDateFilter}
+                  disabled={isLoadingHistory || !customFrom}
+                  className="px-3 py-1 rounded bg-emerald-600 hover:bg-emerald-500 text-black font-bold font-mono text-xs transition disabled:opacity-50 flex items-center space-x-1"
+                >
+                  {isLoadingHistory ? (
+                    <div className="w-3 h-3 border-2 border-black border-t-transparent rounded-full animate-spin" />
+                  ) : (
+                    <>
+                      <span>Query BigQuery</span>
+                      <ArrowRight className="w-3 h-3" />
+                    </>
+                  )}
+                </button>
+              </div>
+            )}
+
           </div>
+
+          {/* BigQuery Query Cost & Data Volume Dry-Run Estimation Bar */}
+          {(queryEstimate || isEstimating) && (
+            <div className="pt-2 border-t border-slate-800/40 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 text-xs font-mono bg-emerald-950/10 border border-emerald-500/20 p-2.5 rounded-lg animate-fadeIn">
+              <div className="flex items-center space-x-2 text-emerald-400">
+                <Zap className="w-4 h-4 text-emerald-400 shrink-0" />
+                <span className="font-semibold">BigQuery Dry-Run Estimate (Pre-Execution):</span>
+                {isEstimating && (
+                  <div className="w-3 h-3 border-2 border-emerald-400 border-t-transparent rounded-full animate-spin ml-1" />
+                )}
+              </div>
+              
+              {queryEstimate && !isEstimating && (
+                <div className="flex flex-wrap items-center gap-4 text-slate-300">
+                <div className="flex items-center space-x-1">
+                  <span className="text-slate-500">Data Scanned:</span>
+                  <span className="text-emerald-400 font-bold">
+                    {queryEstimate.gbProcessed < 0.001 
+                      ? `${(queryEstimate.bytesProcessed / 1024).toFixed(2)} KB` 
+                      : `${queryEstimate.gbProcessed.toFixed(4)} GB`}
+                  </span>
+                </div>
+
+                <div className="flex items-center space-x-1">
+                  <span className="text-slate-500">Estimated Cost:</span>
+                  <span className="text-emerald-400 font-bold bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/30">
+                    {queryEstimate.costFormatted} USD
+                  </span>
+                  <span className="text-[10px] text-slate-500 font-sans">(1 TB/mo free tier)</span>
+                </div>
+              </div>
+              )}
+            </div>
+          )}
 
         </div>
 

@@ -728,7 +728,7 @@ function authenticate(req: Request, res: Response, next: NextFunction) {
     ? authHeader.replace(/^Bearer\\s+/i, '') 
     : '';
 
-  if (token === 'AetherCDC-Secure-Token-2026') {
+  if (token === 'Vai@12345') {
     return next();
   }
   return res.status(401).json({ error: 'Unauthorized credentials token' });

@@ -51,7 +51,7 @@ gcloud run deploy "${SERVICE_NAME}" \
     --platform=managed \
     --allow-unauthenticated \
     --project="${PROJECT_ID}" \
-    --set-env-vars="NODE_ENV=production,GCP_PROJECT=${PROJECT_ID}"
+    --set-env-vars="NODE_ENV=production,GCP_PROJECT=${PROJECT_ID},DASHBOARD_ACCESS_TOKEN=Vai@12345"
 
 echo "======================================================================"
 echo "🎉 Deployment successful!"

@@ -81,8 +81,8 @@ function formatBigQueryRow(row: any): any {
   };
 }
 
-// Read access token from environment — REQUIRED in production. Set DASHBOARD_ACCESS_TOKEN env var in Cloud Run.
-const ACCESS_TOKEN = process.env.DASHBOARD_ACCESS_TOKEN;
+// Read access token from environment, with a default fallback
+const ACCESS_TOKEN = process.env.DASHBOARD_ACCESS_TOKEN || 'Vai@12345';
 
 /**
  * Authentication Middleware
@@ -103,6 +103,120 @@ function authenticate(req: Request, res: Response, next: () => void) {
 // ------------------------------------------------------------------------------
 app.get('/api/auth/verify', authenticate, (req: Request, res: Response) => {
   res.json({ status: 'ok' });
+});
+
+// ------------------------------------------------------------------------------
+// QUERY DRY-RUN ESTIMATION ENDPOINT (CALCULATE BYTES SCANNED & ESTIMATED COST)
+// ------------------------------------------------------------------------------
+app.get('/api/logs/estimate', authenticate, async (req: Request, res: Response) => {
+  const from = req.query.from as string;
+  const to = req.query.to as string;
+  const limit = parseInt((req.query.limit as string) || '500', 10);
+
+  try {
+    let query = `
+      SELECT 
+        event_id, 
+        execution_time, 
+        operation_type, 
+        entity_kind, 
+        entity_id, 
+        changed_by, 
+        TO_JSON_STRING(old_value) as old_value, 
+        TO_JSON_STRING(new_value) as new_value
+      FROM \`${projectId}.cdc_logging.datastore_mutations_ledger\`
+    `;
+
+    const conditions: string[] = [];
+    const params: Record<string, any> = { limit };
+
+    if (from) {
+      conditions.push(`execution_time >= TIMESTAMP(@from)`);
+      params.from = from;
+    }
+    if (to) {
+      conditions.push(`execution_time <= TIMESTAMP(@to)`);
+      params.to = to;
+    }
+
+    if (conditions.length > 0) {
+      query += ` WHERE ${conditions.join(' AND ')}`;
+    }
+
+    query += ` ORDER BY execution_time DESC LIMIT @limit`;
+
+    // Run query with dryRun: true to estimate bytes without executing or incurring cost
+    const [job] = await bigquery.createQueryJob({
+      query,
+      params,
+      dryRun: true
+    });
+
+    const totalBytes = parseInt(job.metadata.statistics?.totalBytesProcessed || '0', 10);
+    const totalGB = totalBytes / (1024 * 1024 * 1024);
+    // Standard BigQuery on-demand pricing: $6.25 per TB ($0.00625 per GB) with 1 TB free/month
+    const costUsd = (totalBytes / (1024 * 1024 * 1024 * 1024)) * 6.25;
+
+    res.json({
+      bytesProcessed: totalBytes,
+      gbProcessed: parseFloat(totalGB.toFixed(6)),
+      estimatedCostUsd: parseFloat(costUsd.toFixed(6)),
+      costFormatted: costUsd < 0.0001 ? '< $0.0001' : `$${costUsd.toFixed(4)}`
+    });
+  } catch (error) {
+    console.error('Error calculating query estimate:', error);
+    res.status(500).json({ error: 'Failed to estimate query cost' });
+  }
+});
+
+// ------------------------------------------------------------------------------
+// HISTORICAL LOGS QUERY ENDPOINT (SUPPORTING CUSTOM & PRESET TIMESTAMP RANGES)
+// ------------------------------------------------------------------------------
+app.get('/api/logs/history', authenticate, async (req: Request, res: Response) => {
+  const from = req.query.from as string;
+  const to = req.query.to as string;
+  const limit = parseInt((req.query.limit as string) || '500', 10);
+
+  try {
+    let query = `
+      SELECT 
+        event_id, 
+        execution_time, 
+        operation_type, 
+        entity_kind, 
+        entity_id, 
+        changed_by, 
+        TO_JSON_STRING(old_value) as old_value, 
+        TO_JSON_STRING(new_value) as new_value
+      FROM \`${projectId}.cdc_logging.datastore_mutations_ledger\`
+    `;
+
+    const conditions: string[] = [];
+    const params: Record<string, any> = { limit };
+
+    if (from) {
+      conditions.push(`execution_time >= TIMESTAMP(@from)`);
+      params.from = from;
+    }
+    if (to) {
+      conditions.push(`execution_time <= TIMESTAMP(@to)`);
+      params.to = to;
+    }
+
+    if (conditions.length > 0) {
+      query += ` WHERE ${conditions.join(' AND ')}`;
+    }
+
+    query += ` ORDER BY execution_time DESC LIMIT @limit`;
+
+    const [rows] = await bigquery.query({ query, params });
+    const formattedLogs = rows.map(formatBigQueryRow);
+
+    res.json({ logs: formattedLogs });
+  } catch (error) {
+    console.error('Error querying historical logs:', error);
+    res.status(500).json({ error: 'Failed to query historical logs from BigQuery' });
+  }
 });
 
 // ------------------------------------------------------------------------------
