@@ -312,16 +312,21 @@ export default function App() {
   // Live estimate recalculation when custom date changes
   useEffect(() => {
     if (timePreset === 'CUSTOM' && customFrom) {
-      const fromIso = new Date(customFrom).toISOString();
-      const toIso = customTo ? new Date(customTo).toISOString() : new Date().toISOString();
-      fetchQueryEstimate(fromIso, toIso);
+      const fromDate = new Date(customFrom);
+      if (!isNaN(fromDate.getTime())) {
+        const fromIso = fromDate.toISOString();
+        const toIso = customTo ? new Date(customTo).toISOString() : new Date().toISOString();
+        fetchQueryEstimate(fromIso, toIso);
+      }
     }
   }, [customFrom, customTo, timePreset]);
 
   // Apply custom range filter
   const applyCustomDateFilter = () => {
     if (!customFrom) return;
-    const fromIso = new Date(customFrom).toISOString();
+    const fromDate = new Date(customFrom);
+    if (isNaN(fromDate.getTime())) return;
+    const fromIso = fromDate.toISOString();
     const toIso = customTo ? new Date(customTo).toISOString() : new Date().toISOString();
     fetchHistoricalLogs(fromIso, toIso);
   };
@@ -343,11 +348,11 @@ export default function App() {
     if (timePreset === 'CUSTOM') {
       if (customFrom) {
         const fromTime = new Date(customFrom).getTime();
-        if (logTime < fromTime) matchesTime = false;
+        if (!isNaN(fromTime) && logTime < fromTime) matchesTime = false;
       }
       if (customTo) {
         const toTime = new Date(customTo).getTime();
-        if (logTime > toTime) matchesTime = false;
+        if (!isNaN(toTime) && logTime > toTime) matchesTime = false;
       }
     } else if (timePreset !== 'ALL') {
       const cutoff = getPresetCutoff(timePreset);
@@ -681,40 +686,58 @@ export default function App() {
               ))}
             </div>
 
-            {/* Custom Date Range Picker */}
+            {/* Custom Date & Time Range Picker */}
             {timePreset === 'CUSTOM' && (
-              <div className="flex flex-wrap items-center gap-2 bg-[#0a0d16] p-2 rounded-lg border border-slate-800 w-full lg:w-auto">
+              <div className="flex flex-col md:flex-row items-stretch md:items-center gap-2.5 bg-[#0a0d16] p-2.5 rounded-lg border border-slate-800 w-full lg:w-auto">
+                {/* FROM input */}
                 <div className="flex items-center space-x-1.5 text-xs text-slate-400 font-mono">
-                  <span className="text-slate-500 font-bold">FROM:</span>
+                  <span className="text-slate-500 font-bold px-1 py-0.5 bg-slate-900 rounded border border-slate-800">FROM</span>
                   <input 
                     type="datetime-local" 
+                    step="1"
                     value={customFrom}
                     onChange={(e) => setCustomFrom(e.target.value)}
-                    className="bg-[#05070f] border border-slate-700/80 rounded px-2 py-1 text-xs text-slate-200 focus:outline-none focus:border-emerald-500"
+                    className="bg-[#05070f] border border-slate-700/80 rounded px-2.5 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-emerald-500 font-mono shadow-inner"
                   />
                 </div>
 
+                {/* TO input */}
                 <div className="flex items-center space-x-1.5 text-xs text-slate-400 font-mono">
-                  <span className="text-slate-500 font-bold">TO:</span>
+                  <span className="text-slate-500 font-bold px-1 py-0.5 bg-slate-900 rounded border border-slate-800">TO</span>
                   <input 
                     type="datetime-local" 
+                    step="1"
                     value={customTo}
                     onChange={(e) => setCustomTo(e.target.value)}
-                    className="bg-[#05070f] border border-slate-700/80 rounded px-2 py-1 text-xs text-slate-200 focus:outline-none focus:border-emerald-500"
+                    placeholder="Now (optional)"
+                    className="bg-[#05070f] border border-slate-700/80 rounded px-2.5 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-emerald-500 font-mono shadow-inner"
                   />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const now = new Date();
+                      const localIso = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 19);
+                      setCustomTo(localIso);
+                    }}
+                    className="px-1.5 py-1 text-[10px] font-mono rounded bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700/60 transition"
+                    title="Set TO timestamp to current time"
+                  >
+                    Now
+                  </button>
                 </div>
 
+                {/* Query Button */}
                 <button
                   onClick={applyCustomDateFilter}
                   disabled={isLoadingHistory || !customFrom}
-                  className="px-3 py-1 rounded bg-emerald-600 hover:bg-emerald-500 text-black font-bold font-mono text-xs transition disabled:opacity-50 flex items-center space-x-1"
+                  className="px-3.5 py-1.5 rounded bg-emerald-600 hover:bg-emerald-500 text-black font-bold font-mono text-xs transition disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center space-x-1.5 shrink-0 shadow-md shadow-emerald-950/30"
                 >
                   {isLoadingHistory ? (
-                    <div className="w-3 h-3 border-2 border-black border-t-transparent rounded-full animate-spin" />
+                    <div className="w-3.5 h-3.5 border-2 border-black border-t-transparent rounded-full animate-spin" />
                   ) : (
                     <>
-                      <span>Query BigQuery</span>
-                      <ArrowRight className="w-3 h-3" />
+                      <span>Query Range</span>
+                      <ArrowRight className="w-3.5 h-3.5" />
                     </>
                   )}
                 </button>
